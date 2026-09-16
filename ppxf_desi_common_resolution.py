@@ -347,15 +347,50 @@ def degrade_to_template_res(lam_obs, flux, noise, z, sps_name,
     fwhm_target_rest = np.interp(lam_rest, lam_temp, fwhm_temp)
     fwhm_target_obs = fwhm_target_rest * (1.0 + z)
 
-    diff_sq = fwhm_target_obs ** 2 - data_fwhm ** 2
-    fwhm_kernel = np.sqrt(np.clip(diff_sq, 0.0, None))
-    print("  fwhm_kernel finite:", np.isfinite(fwhm_kernel).all())
-    print("  fwhm_kernel NaN:   ", np.isnan(fwhm_kernel).sum())
-    print("  fwhm_kernel zeros: ", np.sum(fwhm_kernel == 0))
-    print("  fwhm_kernel min/max:",
-        np.nanmin(fwhm_kernel), np.nanmax(fwhm_kernel))
-    
-    flux_smoothed = smoothspec(lam_obs,flux,resolution=fwhm_kernel*FWHM_TO_SIGMA,smoothtype='lsf')
+    # Choose a COMMON target resolution that is never sharper than either
+    # the observed DESI spectrum or the native SSP templates.  Normally the
+    # templates are broader than DESI, but the wavelength-dependent DESI LSF
+    # can occasionally be very slightly broader at isolated pixels.  In that
+    # case it is impossible to sharpen the data back to the template-native
+    # resolution, so both data and templates must instead be matched to a
+    # slightly broader common resolution.
+    #
+    # Add a tiny kernel floor in quadrature so sedpy never receives sigma=0;
+    # a zero-width LSF causes divisions by zero inside smooth_lsf_fft.
+    kernel_floor_fwhm = 0.05  # Angstrom observed-frame; negligible broadening
+    common_target_obs = np.sqrt(
+        np.maximum(fwhm_target_obs**2, data_fwhm**2) + kernel_floor_fwhm**2
+    )
+    fwhm_target_rest = common_target_obs / (1.0 + z)
+
+    diff_sq = common_target_obs**2 - data_fwhm**2
+    fwhm_kernel = np.sqrt(diff_sq)
+
+    if verbose:
+        data_worse = data_fwhm > fwhm_target_obs
+        print("  pixels where DESI is broader than native template:",
+              int(np.sum(data_worse)))
+        if np.any(data_worse):
+            for j in np.where(data_worse)[0]:
+                print(
+                    f"    index={j}, lambda_obs={lam_obs[j]:.2f} A, "
+                    f"data_FWHM={data_fwhm[j]:.4f}, "
+                    f"template_FWHM_obs={fwhm_target_obs[j]:.4f}, "
+                    f"common_FWHM_obs={common_target_obs[j]:.4f}"
+                )
+        print("  fwhm_kernel finite:", np.isfinite(fwhm_kernel).all())
+        print("  fwhm_kernel zeros: ", np.sum(fwhm_kernel <= 0))
+        print("  fwhm_kernel min/max:",
+              np.nanmin(fwhm_kernel), np.nanmax(fwhm_kernel))
+
+    if not np.all(np.isfinite(fwhm_kernel)) or np.any(fwhm_kernel <= 0):
+        raise RuntimeError("Invalid non-positive/non-finite resolution kernel")
+
+    flux_smoothed = smoothspec(
+        lam_obs, flux,
+        resolution=fwhm_kernel * FWHM_TO_SIGMA,
+        smoothtype='lsf'
+    )
 
     dlam = np.median(np.diff(lam_obs))
     sigma_pix = fwhm_kernel * FWHM_TO_SIGMA / dlam

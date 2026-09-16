@@ -367,73 +367,193 @@ def main():
             nanomaggy = u.def_unit('nanomaggy', 3.631e-6 * u.Jy)
 
             # ---------------------------------------------------------
-            # Get the G/R/Z fluxes and inverse variances FIRST
+            # Get the G/R/Z fluxes
             # ---------------------------------------------------------
+
             fluxes = np.array([
                 p['FLUX_G'],
                 p['FLUX_R'],
                 p['FLUX_Z']
             ], dtype=float)
 
-            ivars = np.array([
-                p['FLUX_IVAR_G'],
-                p['FLUX_IVAR_R'],
-                p['FLUX_IVAR_Z']
+            # ---------------------------------------------------------
+            # Get the G/R/Z 1-sigma flux uncertainties
+            #
+            # For normal objects:
+            #     FLUX_NOISE = 1 / sqrt(FLUX_IVAR)
+            #
+            # For the zero-IVAR objects:
+            #     FLUX_NOISE = empirical nearest-neighbor estimate
+            # ---------------------------------------------------------
+
+            flux_noises = np.array([
+                p['FLUX_NOISE_G'],
+                p['FLUX_NOISE_R'],
+                p['FLUX_NOISE_Z']
             ], dtype=float)
 
-            # Check whether all three bands are usable
-            valid_phot = (
-                np.isfinite(fluxes)
-                & np.isfinite(ivars)
-                & (ivars > 0)
-            )
+            phot_lam = np.array([
+                4863.0,
+                6463.0,
+                9201.0
+            ])
 
             # ---------------------------------------------------------
-            # If any band is bad, don't use photometry for this galaxy
+            # Sanity checks
             # ---------------------------------------------------------
-            if not np.all(valid_phot):
-                print(
-                    f"  WARNING: invalid G/R/Z photometry for TARGETID {targetid} "
-                    "— fitting spectrum only"
+
+            if not np.all(np.isfinite(fluxes)):
+                raise RuntimeError(
+                    f"non-finite photometric flux for TARGETID {targetid}: "
+                    f"{fluxes}"
                 )
-                print("    fluxes:", fluxes)
-                print("    ivars: ", ivars)
 
-                galaxy_phot = None
+            if not np.all(np.isfinite(flux_noises)):
+                raise RuntimeError(
+                    f"non-finite photometric noise for TARGETID {targetid}: "
+                    f"{flux_noises}"
+                )
+
+            if np.any(fluxes <= 0):
+                raise RuntimeError(
+                    f"non-positive photometric flux for TARGETID {targetid}: "
+                    f"{fluxes}"
+                )
+
+            if np.any(flux_noises <= 0):
+                raise RuntimeError(
+                    f"non-positive photometric noise for TARGETID {targetid}: "
+                    f"{flux_noises}"
+                )
 
             # ---------------------------------------------------------
-            # Otherwise, proceed with the normal photometry calculation
+            # Report when empirical uncertainties are being used
             # ---------------------------------------------------------
-            else:
-                phot_flam = []
-                phot_flamerr = []
-                phot_lam = np.array([4863, 6463, 9201])
 
-                for flux, flux_ivar, lam in zip(
-                    fluxes,
-                    ivars,
-                    phot_lam
-                ):
-                    phot_flam.append(
-                        (flux * nanomaggy).to(
-                            u.erg / u.s / u.cm**2 / u.AA,
-                            equivalencies=u.spectral_density(lam * u.AA)
-                        ).value * 1e17
+            if 'PHOT_NOISE_IMPUTED' in p.index:
+                if bool(p['PHOT_NOISE_IMPUTED']):
+                    print(
+                        f"  using empirically estimated photometric "
+                        f"uncertainties for TARGETID {targetid}"
                     )
+                    print("    fluxes:", fluxes)
+                    print("    noises:", flux_noises)
 
-                    fluxerr = np.sqrt(
-                        1 / flux_ivar + (0.01 * flux)**2.
-                    )
+            # ---------------------------------------------------------
+            # Convert nanomaggies to f_lambda
+            # ---------------------------------------------------------
 
-                    phot_flamerr.append(
-                        fluxerr * (phot_flam[-1] / flux)
-                    )
+            phot_flam = []
+            phot_flamerr = []
 
-                galaxy_phot = {
-                    'phot_galaxy': phot_flam,
-                    'noise': phot_flamerr,
-                    'lam': phot_lam
-                }
+            for flux, flux_noise, lam in zip(
+                fluxes,
+                flux_noises,
+                phot_lam
+            ):
+
+                flam = (
+                    (flux * nanomaggy).to(
+                        u.erg / u.s / u.cm**2 / u.AA,
+                        equivalencies=u.spectral_density(
+                            lam * u.AA
+                        )
+                    ).value
+                    * 1e17
+                )
+
+                # Add the existing 1% systematic uncertainty floor
+                fluxerr = np.sqrt(
+                    flux_noise**2
+                    + (0.01 * flux)**2
+                )
+
+                # Convert uncertainty to same f_lambda units
+                flamerr = fluxerr * (flam / flux)
+
+                phot_flam.append(flam)
+                phot_flamerr.append(flamerr)
+
+            galaxy_phot = {
+                'phot_galaxy': np.array(
+                    phot_flam,
+                    dtype=float
+                ),
+                'noise': np.array(
+                    phot_flamerr,
+                    dtype=float
+                ),
+                'lam': phot_lam
+            }
+
+            # # ---------------------------------------------------------
+            # # Get the G/R/Z fluxes and inverse variances FIRST
+            # # ---------------------------------------------------------
+            # fluxes = np.array([
+            #     p['FLUX_G'],
+            #     p['FLUX_R'],
+            #     p['FLUX_Z']
+            # ], dtype=float)
+
+            # ivars = np.array([
+            #     p['FLUX_IVAR_G'],
+            #     p['FLUX_IVAR_R'],
+            #     p['FLUX_IVAR_Z']
+            # ], dtype=float)
+
+            # # Check whether all three bands are usable
+            # valid_phot = (
+            #     np.isfinite(fluxes)
+            #     & np.isfinite(ivars)
+            #     & (ivars > 0)
+            # )
+
+            # # ---------------------------------------------------------
+            # # If any band is bad, don't use photometry for this galaxy
+            # # ---------------------------------------------------------
+            # if not np.all(valid_phot):
+            #     print(
+            #         f"  WARNING: invalid G/R/Z photometry for TARGETID {targetid} "
+            #         "— fitting spectrum only"
+            #     )
+            #     print("    fluxes:", fluxes)
+            #     print("    ivars: ", ivars)
+
+            #     galaxy_phot = None
+
+            # # ---------------------------------------------------------
+            # # Otherwise, proceed with the normal photometry calculation
+            # # ---------------------------------------------------------
+            # else:
+            #     phot_flam = []
+            #     phot_flamerr = []
+            #     phot_lam = np.array([4863, 6463, 9201])
+
+            #     for flux, flux_ivar, lam in zip(
+            #         fluxes,
+            #         ivars,
+            #         phot_lam
+            #     ):
+            #         phot_flam.append(
+            #             (flux * nanomaggy).to(
+            #                 u.erg / u.s / u.cm**2 / u.AA,
+            #                 equivalencies=u.spectral_density(lam * u.AA)
+            #             ).value * 1e17
+            #         )
+
+            #         fluxerr = np.sqrt(
+            #             1 / flux_ivar + (0.01 * flux)**2.
+            #         )
+
+            #         phot_flamerr.append(
+            #             fluxerr * (phot_flam[-1] / flux)
+            #         )
+
+            #     galaxy_phot = {
+            #         'phot_galaxy': phot_flam,
+            #         'noise': phot_flamerr,
+            #         'lam': phot_lam
+            #     }
 
         else:
             galaxy_phot = None
