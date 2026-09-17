@@ -73,6 +73,7 @@ import ppxf.sps_util as sps_util
 from sedpy.smoothing import smoothspec
 from astropy.cosmology import FlatLambdaCDM
 import astropy.units as u
+from astropy import constants
 _COSMO = FlatLambdaCDM(H0=70, Om0=0.3)
 
 __all__ = [
@@ -396,7 +397,7 @@ def prepare_galaxy(lam_obs, flux, noise, z, edge_trim=50.0, verbose=False):
         if verbose:
             print(f"    {bad.sum()} pixels had bad noise -> downweighted")
 
-    norm = np.median(galaxy[galaxy > 0]) if np.any(galaxy > 0) else 1.0
+    norm = 1 #np.median(galaxy[galaxy > 0]) if np.any(galaxy > 0) else 1.0
     galaxy = galaxy / norm
     noise_rebin = noise_rebin / norm
 
@@ -427,6 +428,7 @@ def prepare_templates(velscale, fwhm_gal, z, sps_name="galaxev",
                            lam_range=lam_range_temp,
                            norm_range=list(norm_range),
                            age_range=[0,_COSMO.age(z).value])
+
     sps.templates /= np.median(sps.templates)
 
     if verbose:
@@ -494,7 +496,7 @@ def prepare_photometry(
     p1 = util.synthetic_photometry(sps.lam_temp, combo['templates'], bands=['DECam/DECam_g','DECam/DECam_r','DECam/DECam_z'], redshift=z)
     phot_lam, phot_lam_piv, phot_templates, phot_galaxy, bands = \
         p1.lam_eff[p1.ok], p1.lam_piv[p1.ok], p1.flux[p1.ok], phot_ppxf['galaxy'][p1.ok], np.array(['DECam/DECam_g','DECam/DECam_r','DECam/DECam_z'])[p1.ok]
-    phot_ppxf = {"templates": phot_templates, "galaxy": phot_galaxy, "noise": phot_ppxf['noise'][p1.ok], "lam": phot_lam}
+    phot_ppxf = {"templates": phot_templates, "galaxy": phot_galaxy, "noise": phot_ppxf['noise'][p1.ok], "lam": phot_lam, "flux_orig": phot['flux_orig']}
 
 
 
@@ -659,7 +661,7 @@ def rest_frame_L_over_Lsun(lam_gal, galaxy_normalized, norm, z, *,
     M_abs = m_AB - 5 * np.log10(d_L_pc / 10.0)
     return 10 ** (-0.4 * (M_abs - M_sun_AB))
 
-def get_weights_and_masses(z,pp,sps,combo,prep,compute_mstar=True, verbose=True):
+def get_weights_and_masses(z,pp,sps,combo,prep,phot,compute_mstar=True, verbose=True):
     light_weights = pp.weights[~combo["gas_component"]].reshape(combo["reg_dim"])
     light_weights = light_weights / light_weights.sum()
     logage_lw, metal_lw = sps.mean_age_metal(light_weights, quiet=True)
@@ -668,9 +670,9 @@ def get_weights_and_masses(z,pp,sps,combo,prep,compute_mstar=True, verbose=True)
     mass_weights = mass_weights / mass_weights.sum()
     logage_mw, metal_mw = sps.mean_age_metal(mass_weights, quiet=True)
 
-    ml = sps.mass_to_light(light_weights, band="SDSS/r", quiet=True)
-    ml_formed = formed_mass_to_light(sps,light_weights, band="SDSS/r", quiet=True)
-        
+    ml = sps.mass_to_light(light_weights, band="SDSS/r", redshift=z, quiet=True)
+    ml_formed = formed_mass_to_light(sps,light_weights, band="SDSS/r", redshift=z, quiet=True)
+
     mstar = np.nan; mstar_formed = np.nan
     if compute_mstar:
         l_over_lsun = rest_frame_L_over_Lsun(
@@ -680,6 +682,18 @@ def get_weights_and_masses(z,pp,sps,combo,prep,compute_mstar=True, verbose=True)
             mstar = float(ml) * l_over_lsun
             mstar_formed = float(ml_formed) * l_over_lsun
 
+
+    ##### trying from pPXF example #####
+    #band_x = 'SDSS/r'
+    #mag_x = -2.5*np.log10(phot['flux_orig'][1])+22.5
+    #dist_ratio = _COSMO.luminosity_distance(z).to('pc').value/10
+    #abs_mag_x = mag_x - 2.5*np.log10(dist_ratio**2/(1 + z))
+    #abs_mag_x_sun = util.mag_sun(band_x, redshift=z)
+    #lum_x = 10**(0.4*(abs_mag_x_sun - abs_mag_x))
+    #ml = sps.mass_to_light(light_weights, band=band_x, redshift=z)
+    #lg_mpop = np.log10(lum_x*ml).item()
+    #import pdb; pdb.set_trace()
+    
     return light_weights, mass_weights, logage_lw, metal_lw, logage_mw, metal_mw, mstar, mstar_formed, ml
             
 def get_sfr(age_grid,mass_weights,mstar_formed):
@@ -790,7 +804,10 @@ def fit_galaxy(galaxy_dict, sps_name="galaxev", edge_trim=50.0,
                 sps.lam_temp, prep, sps
             )
             prep['galaxy'] *= spec_scale
-
+            prep['noise'] *= spec_scale
+#            phot['galaxy'] /= spec_scale
+#            phot['noise'] /= spec_scale
+            
         # 5. Good pixels: prep["galaxy"] is ALREADY trimmed to exactly
         #    wave_range in prepare_galaxy, so every pixel here is fair game --
         #    no further wavelength filtering needed.
@@ -818,10 +835,10 @@ def fit_galaxy(galaxy_dict, sps_name="galaxev", edge_trim=50.0,
 
         pp = ppxf(combo["templates"], prep["galaxy"], prep["noise"],
                   prep["velscale"], start, **kwargs)
-        
+
         # 7. Unpack.
         light_weights, mass_weights, logage_lw, metal_lw, logage_mw, metal_mw, mstar, mstar_formed, ml = \
-            get_weights_and_masses(z,pp,sps,combo,prep,compute_mstar=compute_mstar,verbose=verbose)
+            get_weights_and_masses(z,pp,sps,combo,prep,phot,compute_mstar=compute_mstar,verbose=verbose)
         log_sfh,log_sfr = get_sfr(sps.age_grid,mass_weights,mstar_formed)
 
         gas_flux, gas_flux_err = {}, {}

@@ -37,13 +37,16 @@ import csv
 import os
 import sys
 
+from astropy.cosmology import FlatLambdaCDM
+_COSMO = FlatLambdaCDM(H0=70, Om0=0.3)
+
 import numpy as np
 import pandas as pd
 import astropy.units as u
 
 # Agg backend so plots save without needing a display (e.g. over ssh).
 import matplotlib
-matplotlib.use("Agg")
+#matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from ppxf_desi import load_desi_pickle, fit_galaxy, results_to_rows
@@ -308,6 +311,7 @@ def main():
         sys.exit(f"error: no such file: {args.pkl}")
 
     galaxies = load_desi_pickle(args.pkl)
+
     if args.photometry_file:
         phot = pd.read_csv(args.photometry_file)
     print(f"loaded {len(galaxies)} galaxies from {args.pkl}")
@@ -341,11 +345,17 @@ def main():
         elif args.photometry_file:
             p = phot[phot['TARGETID'] == int(gal['name'])]
             nanomaggy = u.def_unit('nanomaggy', 3.631e-6 * u.Jy)
-            
+
+            # sanity check -- commenting out
+            #mag_g = -2.5*np.log10(p['FLUX_G'].values[0])+22.5
+            #mag_i = -2.5*np.log10(p['FLUX_R'].values[0])+22.5
+            #log_mass = 1.15 + 0.70*(mag_g-mag_i) -0.4*(mag_i-_COSMO.distmod(gal['z']).value)
+            #print('gal_name',gal['name'],'log mass',log_mass)
             ### get the photometry ###
             phot_flam = []
             phot_flamerr = []
             phot_lam = np.array([4863,6463,9201])
+            flux_orig = []
             for flux,flux_ivar,lam in zip(
                     [p['FLUX_G'].values[0],p['FLUX_R'].values[0],p['FLUX_Z'].values[0]],
                     [p['FLUX_IVAR_G'].values[0],p['FLUX_IVAR_R'].values[0],p['FLUX_IVAR_Z'].values[0]],
@@ -357,14 +367,17 @@ def main():
                     equivalencies=u.spectral_density(lam*u.AA)).value*1e17)
                 fluxerr = np.sqrt(1/flux_ivar + (0.01*flux)**2.)
                 phot_flamerr.append(fluxerr*(phot_flam[-1]/flux))
+                flux_orig.append(flux)
             galaxy_phot = {'phot_galaxy':phot_flam,
                            'noise':phot_flamerr,
-                           'lam':phot_lam}
+                           'lam':phot_lam,
+                           'flux_orig':flux_orig}
         else:
             galaxy_phot=None
 
         if args.quiet:
             print(f"[{i}/{len(galaxies)}] {gal['name']}", flush=True)
+
         res, pp = fit_galaxy(
             gal,
             sps_name=args.sps,
