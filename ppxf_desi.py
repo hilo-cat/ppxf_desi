@@ -276,13 +276,15 @@ def load_desi_pickle(path):
         noise = np.full_like(ivar, 1e10)
         good = (ivar > 0) & (mask == 0)
         noise[good] = 1.0 / np.sqrt(ivar[good])
-
+        wave_sigma = np.asarray(row["wave_sigma"], dtype=float)
+        
         galaxies.append(dict(
             name=str(row["specid"]),
             z=float(row["redshift"]),
             lam=lam,
             flux=flux,
             noise=noise,
+            wave_fwhm=wave_sigma*2.3548,
         ))
     return galaxies
 
@@ -424,13 +426,23 @@ def prepare_templates(velscale, fwhm_gal, z, sps_name="galaxev",
     templates' own native resolution, so in practice no convolution occurs.
     """
     filename = _ensure_template_file(sps_name)
+
+    # mass weights output by pPXF
     sps = sps_util.sps_lib(filename, velscale, fwhm_gal,
                            lam_range=lam_range_temp,
-                           norm_range=list(norm_range),
+                           norm_range=None,
                            age_range=[0,_COSMO.age(z).value])
 
+    # get the light-weighted version so we can convert back later
+    sps_lw = sps_util.sps_lib(filename, velscale, fwhm_gal,
+                              lam_range=lam_range_temp,
+                              norm_range=norm_range,
+                              age_range=[0,_COSMO.age(z).value])
+    sps.lw_flux_conv = sps_lw.flux
+    
     sps.templates /= np.median(sps.templates)
 
+    
     if verbose:
         print(f"    templates: {sps_name}, shape {sps.templates.shape} "
               f"(n_wave, n_age, n_metal)")
@@ -662,16 +674,16 @@ def rest_frame_L_over_Lsun(lam_gal, galaxy_normalized, norm, z, *,
     return 10 ** (-0.4 * (M_abs - M_sun_AB))
 
 def get_weights_and_masses(z,pp,sps,combo,prep,phot,compute_mstar=True, verbose=True):
-    light_weights = pp.weights[~combo["gas_component"]].reshape(combo["reg_dim"])
+    light_weights = pp.weights[~combo["gas_component"]].reshape(combo["reg_dim"])*sps.flux/sps.lw_flux_conv
     light_weights = light_weights / light_weights.sum()
     logage_lw, metal_lw = sps.mean_age_metal(light_weights, quiet=True)
 
-    mass_weights = light_weights / sps.flux
+    mass_weights = pp.weights[~combo["gas_component"]].reshape(combo["reg_dim"]) #light_weights / sps.flux
     mass_weights = mass_weights / mass_weights.sum()
     logage_mw, metal_mw = sps.mean_age_metal(mass_weights, quiet=True)
 
-    ml = sps.mass_to_light(light_weights, band="SDSS/r", redshift=z, quiet=True)
-    ml_formed = formed_mass_to_light(sps,light_weights, band="SDSS/r", redshift=z, quiet=True)
+    ml = sps.mass_to_light(mass_weights, band="SDSS/r", redshift=z, quiet=True)
+    ml_formed = formed_mass_to_light(sps,mass_weights, band="SDSS/r", redshift=z, quiet=True)
 
     mstar = np.nan; mstar_formed = np.nan
     if compute_mstar:
@@ -690,9 +702,9 @@ def get_weights_and_masses(z,pp,sps,combo,prep,phot,compute_mstar=True, verbose=
     #abs_mag_x = mag_x - 2.5*np.log10(dist_ratio**2/(1 + z))
     #abs_mag_x_sun = util.mag_sun(band_x, redshift=z)
     #lum_x = 10**(0.4*(abs_mag_x_sun - abs_mag_x))
-    #ml = sps.mass_to_light(light_weights, band=band_x, redshift=z)
+    #lw = pp.weights[~combo["gas_component"]].reshape(combo["reg_dim"])
+    #ml = sps.mass_to_light(lw, band=band_x, redshift=z)
     #lg_mpop = np.log10(lum_x*ml).item()
-    #import pdb; pdb.set_trace()
     
     return light_weights, mass_weights, logage_lw, metal_lw, logage_mw, metal_mw, mstar, mstar_formed, ml
             

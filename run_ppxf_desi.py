@@ -8,6 +8,8 @@ Examples
 --------
     # first 3 galaxies, quick look
     python run_ppxf_desi.py examples/desi_spectra.pkl -n 3 -p examples/DESI_starlight_phot.csv
+    python run_ppxf_desi.py examples/MPA_matches.pkl -p examples/MPA_phot_Legacy.csv --specid 39633307708689227
+39627790982585523
 
     # all galaxies, with bootstrap errors, writing to a named file
     python run_ppxf_desi.py desi_spectra.pkl --nboot 50 -o results.csv
@@ -30,8 +32,8 @@ inc = ['sparcl_id', 'specid', 'data_release', 'redshift', 'flux',
        'wavelength', 'model', 'ivar', 'mask', 'spectype', 'ra',
        'dec', 'wave_sigma']
 
-from sparcl.client import SparclClient
-client = SparclClient()
+#from sparcl.client import SparclClient
+#client = SparclClient()
 import argparse
 import csv
 import os
@@ -183,7 +185,6 @@ def plot_spec_and_phot(pp,path):
 
     pp.plot(gas_clip=1, spec=1, lam_flam=False)
     plt.savefig(path, dpi=120, bbox_inches="tight")
-
 
 # Rest-frame windows (A) around the major diagnostic lines. Some are grouped
 # (e.g. Halpha + [NII]) because they sit close enough together to share one
@@ -338,8 +339,8 @@ def main():
 
     results = []
     for i, gal in enumerate(galaxies, 1):
-        ret = client.retrieve_by_specid([int(gal['name'])],include=inc,fmt='pandas')
-        gal['wave_fwhm'] = ret.wave_sigma[0]*2.3548
+        #import pdb; pdb.set_trace()
+        #ret = client.retrieve_by_specid([int(gal['name'])],include=inc,fmt='pandas')
         if args.photometry_file and np.int64(gal['name']) not in phot['TARGETID'].values:
             raise RuntimeError(f"photometry not found for gal {gal['name']}")
         elif args.photometry_file:
@@ -347,18 +348,19 @@ def main():
             nanomaggy = u.def_unit('nanomaggy', 3.631e-6 * u.Jy)
 
             # sanity check -- commenting out
-            #mag_g = -2.5*np.log10(p['FLUX_G'].values[0])+22.5
-            #mag_i = -2.5*np.log10(p['FLUX_R'].values[0])+22.5
+            #mag_g = -2.5*np.log10(p['flux_g'].values[0])+22.5
+            #mag_i = -2.5*np.log10(p['flux_r'].values[0])+22.5
             #log_mass = 1.15 + 0.70*(mag_g-mag_i) -0.4*(mag_i-_COSMO.distmod(gal['z']).value)
             #print('gal_name',gal['name'],'log mass',log_mass)
+
             ### get the photometry ###
             phot_flam = []
             phot_flamerr = []
             phot_lam = np.array([4863,6463,9201])
             flux_orig = []
             for flux,flux_ivar,lam in zip(
-                    [p['FLUX_G'].values[0],p['FLUX_R'].values[0],p['FLUX_Z'].values[0]],
-                    [p['FLUX_IVAR_G'].values[0],p['FLUX_IVAR_R'].values[0],p['FLUX_IVAR_Z'].values[0]],
+                    [p['flux_g'].values[0],p['flux_r'].values[0],p['flux_z'].values[0]],
+                    [p['flux_ivar_g'].values[0],p['flux_ivar_r'].values[0],p['flux_ivar_z'].values[0]],
                     phot_lam
             ):
 
