@@ -941,19 +941,23 @@ def _bootstrap(z, pp, prep, phot, sps, combo, goodpixels, nboot, seed, verbose):
         [], [], [], [], [], [], [], [], [], [], [], [], [], []
     for i in range(nboot):
         pert = pp.bestfit + resid * rng.choice([-1.0, 1.0], size=resid.size)
+        phot_pert = phot.copy()
+        phot_pert['galaxy'] = phot_pert['galaxy'] + np.random.normal(loc=0,scale=phot_pert['noise'])
         ppb = ppxf(combo["templates"], pert, prep["noise"], prep["velscale"],
                    warm, moments=moments, degree=-1, mdegree=-1, bounds=bounds,
                    component=combo["component"],
                    gas_component=combo["gas_component"],
                    gas_names=combo["gas_names"], reg_dim=combo["reg_dim"],
                    lam=prep["lam_gal"], lam_temp=sps.lam_temp,
-                   goodpixels=goodpixels, quiet=True, phot=phot)
+                   goodpixels=goodpixels, quiet=True, phot=phot_pert)
         w = ppb.weights[~combo["gas_component"]].reshape(combo["reg_dim"])
         w = w / w.sum()
         a, m = sps.mean_age_metal(w, quiet=True)
 
+        pert_full = prep.copy()
+        pert_full['galaxy'] = pert
         light_weights, mass_weights, logage_lw, metal_lw, logage_mw, metal_mw, mstar, mstar_formed, ml = \
-            get_weights_and_masses(z,pp,sps,combo,prep,verbose=False)
+            get_weights_and_masses(z,pp,sps,combo,pert_full,phot_pert,verbose=False)
         log_sfh,log_sfr = get_sfr(sps.age_grid,mass_weights,mstar_formed)
 
         logage_lws.append(logage_lw)
