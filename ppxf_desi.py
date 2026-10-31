@@ -148,7 +148,8 @@ class FitResult:
     ml: float = np.nan            # M/L in SDSS/r, solar units
     mstar: float = np.nan         # absolute stellar mass, Msun (see
                                    # rest_frame_L_over_Lsun for assumptions)
-
+    mstar_formed: float = np.nan  # formed mass instead of surviving mass
+                                   
     # dust
     av_stars: float = np.nan
     av_gas: float = np.nan
@@ -179,6 +180,7 @@ class FitResult:
     metal_lw_16: float = np.nan
     metal_mw_16: float = np.nan
     mstar_16: float = np.nan
+    mstar_formed_16: float = np.nan
     av_stars_16: float = np.nan
     av_gas_16: float = np.nan
     v_16: float = np.nan
@@ -194,6 +196,7 @@ class FitResult:
     metal_lw_84: float = np.nan
     metal_mw_84: float = np.nan
     mstar_84: float = np.nan
+    mstar_formed_84: float = np.nan
     av_stars_84: float = np.nan
     av_gas_84: float = np.nan
     v_84: float = np.nan
@@ -721,12 +724,12 @@ def get_sfr(age_grid,mass_weights,mstar_formed):
 
     sfh = np.sum(mass_weights,axis=1)*mstar_formed / (delta_t*1e9)
     log_sfr = [
-        np.log10(np.sum(sfh[delta_t < 0.01])/len(sfh[delta_t < 0.01])),
-        np.log10(np.sum(sfh[delta_t < 0.03])/len(sfh[delta_t < 0.03])),
-        np.log10(np.sum(sfh[delta_t < 0.1])/len(sfh[delta_t < 0.1]))
+        np.log10(np.sum(sfh[age_edges[1:] < 0.01]*delta_t[age_edges[1:] < 0.01])/np.sum(delta_t[age_edges[1:] < 0.01])),
+        np.log10(np.sum(sfh[age_edges[1:] < 0.03]*delta_t[age_edges[1:] < 0.03])/np.sum(delta_t[age_edges[1:] < 0.03])),
+        np.log10(np.sum(sfh[age_edges[1:] < 0.1]*delta_t[age_edges[1:] < 0.1])/np.sum(delta_t[age_edges[1:] < 0.1]))
     ] # 10, 30, 100 Myr averages
 
-    
+
     return np.log10(sfh),log_sfr
 
 # ======================================================================
@@ -867,7 +870,7 @@ def fit_galaxy(galaxy_dict, sps_name="galaxev", edge_trim=50.0,
             chi2=float(pp.chi2), regul_used=float(regul),
             logage_lw=float(logage_lw), logage_mw=float(logage_mw),
             metal_lw=float(metal_lw), metal_mw=float(metal_mw),
-            ml=float(ml), mstar=mstar,
+            ml=float(ml), mstar=mstar, mstar_formed=mstar_formed,
             av_stars=float(getattr(pp, "reddening", np.nan) or np.nan),
             av_gas=float(getattr(pp, "gas_reddening", np.nan) or np.nan),
             v=v, sigma=sigma, kin_at_bound=_at_bound(v, sigma),
@@ -885,7 +888,7 @@ def fit_galaxy(galaxy_dict, sps_name="galaxev", edge_trim=50.0,
 
         # 8. Optional bootstrap.
         if nboot > 0:
-            logage_lw_cis,metal_lw_cis,logage_mw_cis,metal_mw_cis,mstar_cis,log_sfr_10myr_cis,log_sfr_30myr_cis,log_sfr_100myr_cis,\
+            logage_lw_cis,metal_lw_cis,logage_mw_cis,metal_mw_cis,mstar_cis,mstar_formed_cis,log_sfr_10myr_cis,log_sfr_30myr_cis,log_sfr_100myr_cis,\
                 v_cis,sigma_cis,av_stars_cis,av_gas_cis,v_gas_cis,sigma_gas_cis = \
                 _bootstrap(
                     z, pp, prep, phot, sps, combo, goodpixels, nboot, seed, verbose
@@ -897,6 +900,7 @@ def fit_galaxy(galaxy_dict, sps_name="galaxev", edge_trim=50.0,
             res.metal_lw_16,res.metal_lw,res.metal_lw_84 = metal_lw_cis[:]
             res.metal_mw_16,res.metal_mw,res.metal_mw_84 = metal_mw_cis[:]
             res.mstar_16,res.mstar,res.mstar_84 = mstar_cis[:]
+            res.mstar_formed_16,res.mstar_formed,res.mstar_formed_84 = mstar_formed_cis[:]
             res.av_stars_16,res.av_stars,res.av_stars_84 = av_stars_cis[:]
             res.av_gas_16,res.av_gas,res.av_gas_84 = av_gas_cis[:]
             res.v_16,res.v,res.v_84 = v_cis[:]
@@ -936,9 +940,9 @@ def _bootstrap(z, pp, prep, phot, sps, combo, goodpixels, nboot, seed, verbose):
     _, bounds, moments = _start_and_bounds()
 
     #ages, metals = [], []
-    logage_lws, metal_lws, logage_mws, metal_mws, mstars, sfrs_10myr, sfrs_30myr, sfrs_100myr,\
+    logage_lws, metal_lws, logage_mws, metal_mws, mstars, mstars_formed, sfrs_10myr, sfrs_30myr, sfrs_100myr,\
         vs, sigmas, avs_stars, avs_gas, vs_gas, sigmas_gas  = \
-        [], [], [], [], [], [], [], [], [], [], [], [], [], []
+        [], [], [], [], [], [], [], [], [], [], [], [], [], [], []
     for i in range(nboot):
         pert = pp.bestfit + resid * rng.choice([-1.0, 1.0], size=resid.size)
         phot_pert = phot.copy()
@@ -965,6 +969,7 @@ def _bootstrap(z, pp, prep, phot, sps, combo, goodpixels, nboot, seed, verbose):
         logage_mws.append(logage_mw)
         metal_mws.append(metal_mw)
         mstars.append(mstar)
+        mstars_formed.append(mstar_formed)
         sfrs_10myr.append(log_sfr[0])
         sfrs_30myr.append(log_sfr[1])
         sfrs_100myr.append(log_sfr[2])
@@ -984,6 +989,7 @@ def _bootstrap(z, pp, prep, phot, sps, combo, goodpixels, nboot, seed, verbose):
     logage_mw_cis = np.percentile(logage_mws,[16,50,84])
     metal_mw_cis = np.percentile(metal_mws,[16,50,84])
     mstar_cis = np.percentile(mstars,[16,50,84])
+    mstar_formed_cis = np.percentile(mstars_formed,[16,50,84])
     sfr_10myr_cis = np.percentile(sfrs_10myr,[16,50,84])
     sfr_30myr_cis = np.percentile(sfrs_30myr,[16,50,84])
     sfr_100myr_cis = np.percentile(sfrs_100myr,[16,50,84])
@@ -995,7 +1001,7 @@ def _bootstrap(z, pp, prep, phot, sps, combo, goodpixels, nboot, seed, verbose):
     sigma_gas_cis = np.percentile(sigmas_gas,[16,50,84])
 
     
-    return logage_lw_cis,metal_lw_cis,logage_mw_cis,metal_mw_cis,mstar_cis,\
+    return logage_lw_cis,metal_lw_cis,logage_mw_cis,metal_mw_cis,mstar_cis,mstar_formed_cis,\
         sfr_10myr_cis,sfr_30myr_cis,sfr_100myr_cis,v_cis,sigma_cis,av_stars_cis,\
         av_gas_cis,v_gas_cis,sigma_gas_cis
 
