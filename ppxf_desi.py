@@ -961,7 +961,7 @@ def _bootstrap(z, pp, prep, phot, sps, combo, goodpixels, nboot, seed, verbose):
         pert_full = prep.copy()
         pert_full['galaxy'] = pert
         light_weights, mass_weights, logage_lw, metal_lw, logage_mw, metal_mw, mstar, mstar_formed, ml = \
-            get_weights_and_masses(z,pp,sps,combo,pert_full,phot_pert,verbose=False)
+            get_weights_and_masses(z,ppb,sps,combo,pert_full,phot_pert,verbose=False)
         log_sfh,log_sfr = get_sfr(sps.age_grid,mass_weights,mstar_formed)
 
         logage_lws.append(logage_lw)
